@@ -59,13 +59,15 @@ python3 run_converter.py --rebuild 'https://youtu.be/dQw4w9WgXcQ'
 If you use `zsh` and do not want quotes or escapes around watch URLs with `?v=`, add these functions to `~/.zshrc`:
 
 ```zsh
+YOUTUBE_PDF_REPO="/absolute/path/to/youtubeToPdf"
+
 function youtube-pdf() {
-  python3 /Users/dishantpatel/Documents/Projects/youtubeToPdf/run_converter.py "$@"
+  python3 "$YOUTUBE_PDF_REPO/run_converter.py" "$@"
 }
 alias youtube-pdf='noglob youtube-pdf'
 
 function youtube-pdf-rebuild() {
-  python3 /Users/dishantpatel/Documents/Projects/youtubeToPdf/run_converter.py --rebuild "$@"
+  python3 "$YOUTUBE_PDF_REPO/run_converter.py" --rebuild "$@"
 }
 alias youtube-pdf-rebuild='noglob youtube-pdf-rebuild'
 ```
@@ -130,7 +132,7 @@ An example file is provided at `examples/urls.txt`.
 Outputs are written to:
 
 ```text
-/Users/dishantpatel/Downloads/youtube-to-pdf/
+~/Downloads/youtube-to-pdf/
 ```
 
 Each successful video produces:
