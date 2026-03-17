@@ -1,0 +1,14 @@
+.git
+.pytest_cache
+__pycache__
+.DS_Store
+.make
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.swo
+dist
+build
+htmlcov
+
