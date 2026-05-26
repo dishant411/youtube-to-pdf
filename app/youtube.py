@@ -9,6 +9,7 @@ from app.models import TranscriptSegment, VideoReference
 
 ALLOWED_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
 VIDEO_ID_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+DEFAULT_TRANSCRIPT_LANGUAGES = ("en", "hi")
 
 
 class VideoValidationError(ValueError):
@@ -124,28 +125,58 @@ def _convert_entries(raw_entries: Iterable[dict]) -> List[TranscriptSegment]:
     return segments
 
 
-def _fetch_with_class_api(api_class, video_id: str) -> Tuple[List[TranscriptSegment], Optional[str]]:
-    entries = api_class.get_transcript(video_id)
-    return _convert_entries(entries), None
+def _fetch_with_class_api(
+    api_class,
+    video_id: str,
+    preferred_languages: Sequence[str],
+) -> Tuple[List[TranscriptSegment], Optional[str]]:
+    last_error: Optional[Exception] = None
+    for language_code in preferred_languages:
+        try:
+            entries = api_class.get_transcript(video_id, languages=[language_code])
+            return _convert_entries(entries), language_code
+        except Exception as exc:
+            last_error = exc
+    if last_error:
+        raise last_error
+    raise TranscriptUnavailableError("No transcript languages were configured.")
 
 
-def _fetch_with_instance_api(api_class, video_id: str) -> Tuple[List[TranscriptSegment], Optional[str]]:
+def _find_preferred_transcript(transcript_list, preferred_languages: Sequence[str]):
+    for language_code in preferred_languages:
+        if hasattr(transcript_list, "find_transcript"):
+            try:
+                return transcript_list.find_transcript([language_code])
+            except Exception:
+                pass
+        if hasattr(transcript_list, "find_generated_transcript"):
+            try:
+                return transcript_list.find_generated_transcript([language_code])
+            except Exception:
+                pass
+        if hasattr(transcript_list, "find_manually_created_transcript"):
+            try:
+                return transcript_list.find_manually_created_transcript([language_code])
+            except Exception:
+                pass
+    return next(iter(transcript_list))
+
+
+def _fetch_with_instance_api(
+    api_class,
+    video_id: str,
+    preferred_languages: Sequence[str],
+) -> Tuple[List[TranscriptSegment], Optional[str]]:
     api = api_class()
     if hasattr(api, "fetch"):
-        fetched = api.fetch(video_id)
+        fetched = api.fetch(video_id, languages=list(preferred_languages))
         language = getattr(fetched, "language_code", None)
         if hasattr(fetched, "to_raw_data"):
             return _convert_entries(fetched.to_raw_data()), language
         return _convert_entries(list(fetched)), language
     if hasattr(api, "list") or hasattr(api, "list_transcripts"):
         transcript_list = api.list(video_id) if hasattr(api, "list") else api.list_transcripts(video_id)
-        if hasattr(transcript_list, "find_transcript"):
-            try:
-                transcript = transcript_list.find_transcript(["en"])
-            except Exception:
-                transcript = next(iter(transcript_list))
-        else:
-            transcript = next(iter(transcript_list))
+        transcript = _find_preferred_transcript(transcript_list, preferred_languages)
         language = getattr(transcript, "language_code", None)
         fetched = transcript.fetch()
         if hasattr(fetched, "to_raw_data"):
@@ -154,11 +185,14 @@ def _fetch_with_instance_api(api_class, video_id: str) -> Tuple[List[TranscriptS
     raise TranscriptUnavailableError("Unsupported youtube-transcript-api interface.")
 
 
-def fetch_transcript_data(video_id: str) -> Tuple[List[TranscriptSegment], Optional[str]]:
+def fetch_transcript_data(
+    video_id: str,
+    preferred_languages: Sequence[str] = DEFAULT_TRANSCRIPT_LANGUAGES,
+) -> Tuple[List[TranscriptSegment], Optional[str]]:
     api_class = _import_transcript_api()
     try:
         if hasattr(api_class, "get_transcript"):
-            return _fetch_with_class_api(api_class, video_id)
-        return _fetch_with_instance_api(api_class, video_id)
+            return _fetch_with_class_api(api_class, video_id, preferred_languages)
+        return _fetch_with_instance_api(api_class, video_id, preferred_languages)
     except Exception as exc:
         raise TranscriptUnavailableError(str(exc)) from exc

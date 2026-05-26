@@ -179,10 +179,54 @@ def request_summary_text(
             raise SummaryGenerationError(str(exc.reason)) from exc
 
 
+def _is_english_language(language: Optional[str]) -> bool:
+    if not language:
+        return True
+    return language.lower().split("-")[0] == "en"
+
+
+def translate_transcript_to_english(
+    title: str,
+    canonical_url: str,
+    blocks: Sequence[Tuple[Optional[str], str]],
+    source_language: Optional[str],
+    model: Optional[str] = None,
+    max_chunk_chars: int = 7000,
+    translation_max_output_tokens: int = 2200,
+) -> tuple[str, str]:
+    chunks = chunk_text_blocks(blocks, max_chunk_chars=max_chunk_chars)
+    if not chunks:
+        raise SummaryGenerationError("Transcript cleaning removed all usable transcript content.")
+
+    translated_chunks = []
+    resolved_model = model or os.environ.get("OPENAI_MODEL") or DEFAULT_MODEL
+    for index, chunk in enumerate(chunks, start=1):
+        prompt = render_prompt(
+            "translate-transcript.md",
+            {
+                "chunkCount": str(len(chunks)),
+                "chunkIndex": str(index),
+                "sourceLanguage": source_language or "unknown",
+                "sourceUrl": canonical_url,
+                "transcriptText": chunk,
+                "videoTitle": title,
+            },
+        )
+        translated_chunk, resolved_model = request_summary_text(
+            prompt,
+            model=resolved_model,
+            max_output_tokens=translation_max_output_tokens,
+        )
+        translated_chunks.append(translated_chunk)
+
+    return "\n\n".join(translated_chunks), resolved_model
+
+
 def summarize_transcript(
     title: str,
     canonical_url: str,
     segments: Iterable[TranscriptSegment],
+    language: Optional[str] = None,
     model: Optional[str] = None,
     max_chunk_chars: int = 7000,
     max_block_length: int = 900,
@@ -200,7 +244,18 @@ def summarize_transcript(
     if not blocks:
         raise SummaryGenerationError("Transcript cleaning removed all usable transcript content.")
 
-    compact_transcript = blocks_to_compact_text(blocks)
+    resolved_model = model
+    if _is_english_language(language):
+        compact_transcript = blocks_to_compact_text(blocks)
+    else:
+        compact_transcript, resolved_model = translate_transcript_to_english(
+            title=title,
+            canonical_url=canonical_url,
+            blocks=blocks,
+            source_language=language,
+            model=model,
+            max_chunk_chars=max_chunk_chars,
+        )
     timestamp_guidance = "Use timestamps only when they help the reader jump to a material moment."
 
     prompt = render_prompt(
@@ -214,6 +269,6 @@ def summarize_transcript(
     )
     return request_summary_text(
         prompt,
-        model=model,
+        model=resolved_model,
         max_output_tokens=final_summary_max_output_tokens,
     )

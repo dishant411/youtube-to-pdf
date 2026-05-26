@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from app.models import VideoReference
-from app.youtube import VideoValidationError, dedupe_references, parse_video_reference
+from app.youtube import VideoValidationError, dedupe_references, fetch_transcript_data, parse_video_reference
 
 
 class UrlParsingTests(unittest.TestCase):
@@ -54,7 +55,35 @@ class UrlParsingTests(unittest.TestCase):
         unique = dedupe_references(refs)
         self.assertEqual(len(unique), 1)
 
+    def test_fetch_transcript_prefers_english_then_hindi(self) -> None:
+        class FakeFetched:
+            language_code = "hi"
+
+            def to_raw_data(self):
+                return [{"text": "नमस्ते", "start": 0.0, "duration": 1.0}]
+
+        class FakeApi:
+            def fetch(self, video_id, languages):
+                self.video_id = video_id
+                self.languages = languages
+                return FakeFetched()
+
+        class FakeApiFactory:
+            last_instance = None
+
+            def __call__(self):
+                self.last_instance = FakeApi()
+                return self.last_instance
+
+        factory = FakeApiFactory()
+        youtube_module = __import__("app.youtube", fromlist=["_import_transcript_api"])
+        with mock.patch.object(youtube_module, "_import_transcript_api", return_value=factory):
+            segments, language = fetch_transcript_data("kKNoBH0iE1k")
+
+        self.assertEqual(language, "hi")
+        self.assertEqual(segments[0].text, "नमस्ते")
+        self.assertEqual(factory.last_instance.languages, ["en", "hi"])
+
 
 if __name__ == "__main__":
     unittest.main()
-

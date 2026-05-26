@@ -93,6 +93,7 @@ def _process_reference(reference: VideoReference, output_dir: Path, generated_at
         title=title,
         canonical_url=reference.canonical_url,
         segments=segments,
+        language=language,
     )
     print("Rendering summary PDF for {title}...".format(title=title), file=sys.stderr)
     render_summary_pdf(
