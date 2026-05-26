@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
@@ -191,16 +192,24 @@ def translate_transcript_to_english(
     blocks: Sequence[Tuple[Optional[str], str]],
     source_language: Optional[str],
     model: Optional[str] = None,
-    max_chunk_chars: int = 7000,
-    translation_max_output_tokens: int = 2200,
+    max_chunk_chars: int = 3000,
+    translation_max_output_tokens: int = 3000,
 ) -> tuple[str, str]:
     chunks = chunk_text_blocks(blocks, max_chunk_chars=max_chunk_chars)
     if not chunks:
         raise SummaryGenerationError("Transcript cleaning removed all usable transcript content.")
 
+    print(
+        "Translating {language} transcript to English in {count} chunk(s)...".format(
+            language=source_language or "non-English",
+            count=len(chunks),
+        ),
+        file=sys.stderr,
+    )
     translated_chunks = []
     resolved_model = model or os.environ.get("OPENAI_MODEL") or DEFAULT_MODEL
     for index, chunk in enumerate(chunks, start=1):
+        print("Translating chunk {index}/{count}...".format(index=index, count=len(chunks)), file=sys.stderr)
         prompt = render_prompt(
             "translate-transcript.md",
             {
@@ -231,6 +240,7 @@ def summarize_transcript(
     max_chunk_chars: int = 7000,
     max_block_length: int = 900,
     timestamp_interval_seconds: int = 180,
+    translation_max_chunk_chars: int = 3000,
     final_input_token_budget: int = 2500,
     chunk_summary_max_output_tokens: int = 260,
     final_summary_max_output_tokens: int = 700,
@@ -254,8 +264,9 @@ def summarize_transcript(
             blocks=blocks,
             source_language=language,
             model=model,
-            max_chunk_chars=max_chunk_chars,
+            max_chunk_chars=min(max_chunk_chars, translation_max_chunk_chars),
         )
+        print("Hindi transcript translation complete. Generating English summary...", file=sys.stderr)
     timestamp_guidance = "Use timestamps only when they help the reader jump to a material moment."
 
     prompt = render_prompt(

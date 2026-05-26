@@ -126,6 +126,18 @@ class RunConverterTests(unittest.TestCase):
                                         self.assertEqual(run_converter.main(["https://youtu.be/dQw4w9WgXcQ"]), 0)
                                         open_outputs.assert_called_once_with(output_dir, [new_pdf.resolve()])
 
+    def test_main_rebuilds_when_image_is_stale(self) -> None:
+        with mock.patch("run_converter.detect_mode", return_value=("single", "https://youtu.be/dQw4w9WgXcQ")):
+            with mock.patch("run_converter.ensure_docker_available", return_value=(0, False)):
+                with mock.patch("run_converter.docker_runner.doctor", return_value=0):
+                    with mock.patch("run_converter.image_exists", return_value=True):
+                        with mock.patch("run_converter.image_stale", return_value=True):
+                            with mock.patch("run_converter.docker_runner.build", return_value=0) as build:
+                                with mock.patch("run_converter.run_conversion", return_value=0):
+                                    with mock.patch("run_converter._open_macos_outputs"):
+                                        self.assertEqual(run_converter.main(["https://youtu.be/dQw4w9WgXcQ"]), 0)
+                                        build.assert_called_once_with()
+
     def test_open_macos_outputs_opens_finder_and_preview(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)

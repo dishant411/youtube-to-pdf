@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Sequence, Tuple
 from urllib.request import urlopen
@@ -36,6 +37,14 @@ BREW_CLI_CANDIDATES = [
 ]
 DOCKER_APP_NAME = "Docker"
 DOCKER_COMMAND_TIMEOUT_SECONDS = 30
+SOURCE_STALE_PATHS = [
+    Path("Dockerfile"),
+    Path("requirements.txt"),
+    Path("run_converter.py"),
+    Path("app"),
+    Path("scripts"),
+    Path("node-backend") / "prompts",
+]
 
 load_repo_env()
 
@@ -81,6 +90,64 @@ def image_exists() -> bool:
     except subprocess.TimeoutExpired:
         return False
     return completed.returncode == 0
+
+
+def _parse_docker_timestamp(value: str) -> Optional[datetime]:
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    if cleaned.endswith("Z"):
+        cleaned = cleaned[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(cleaned)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def image_created_at() -> Optional[datetime]:
+    docker_binary = docker_runner.resolve_docker_binary()
+    if docker_binary is None:
+        return None
+    try:
+        completed = subprocess.run(
+            [docker_binary, "image", "inspect", "--format", "{{.Created}}", docker_runner.IMAGE_NAME],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+            timeout=DOCKER_COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    if completed.returncode != 0:
+        return None
+    return _parse_docker_timestamp(completed.stdout)
+
+
+def latest_source_mtime() -> Optional[datetime]:
+    repo_root = Path(__file__).resolve().parent
+    latest = None
+    for relative_path in SOURCE_STALE_PATHS:
+        path = repo_root / relative_path
+        if not path.exists():
+            continue
+        candidates = [path] if path.is_file() else [candidate for candidate in path.rglob("*") if candidate.is_file()]
+        for candidate in candidates:
+            mtime = datetime.fromtimestamp(candidate.stat().st_mtime, tz=timezone.utc)
+            if latest is None or mtime > latest:
+                latest = mtime
+    return latest
+
+
+def image_stale() -> bool:
+    created_at = image_created_at()
+    source_mtime = latest_source_mtime()
+    if created_at is None or source_mtime is None:
+        return False
+    return source_mtime > created_at
 
 
 def docker_daemon_ready() -> bool:
@@ -322,7 +389,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return doctor_code
 
     try:
-        if args.rebuild or not image_exists():
+        if args.rebuild or not image_exists() or image_stale():
+            if not args.rebuild and image_exists():
+                print("Docker image is older than local source files. Rebuilding...", file=sys.stderr)
             build_code = docker_runner.build()
             if build_code != 0:
                 return build_code
