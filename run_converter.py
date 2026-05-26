@@ -8,7 +8,7 @@ Usage:
 Behavior:
     - Pass a YouTube URL to convert one video.
     - Pass a text file path to process one URL per line.
-    - Output is written to ~/Downloads/youtube-to-pdf/.
+    - Output is written to ~/Documents/youtube-to-pdf/.
     - The Docker runtime container is removed automatically after the job finishes.
     - In zsh, use a `youtube-pdf` function plus a `noglob` alias in ~/.zshrc to avoid quoting watch URLs.
 """
@@ -23,9 +23,10 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from urllib.request import urlopen
 from typing import Optional, Sequence, Tuple
+from urllib.request import urlopen
 
+from app.env_loader import load_repo_env
 from scripts import docker_runner
 
 HOMEBREW_INSTALL_URL = "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"
@@ -34,11 +35,14 @@ BREW_CLI_CANDIDATES = [
     Path("/usr/local/bin/brew"),
 ]
 DOCKER_APP_NAME = "Docker"
+DOCKER_COMMAND_TIMEOUT_SECONDS = 30
+
+load_repo_env()
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run the YouTube-to-PDF converter for either one URL or one batch file."
+        description="Run the YouTube summary-to-PDF converter for either one URL or one batch file."
     )
     parser.add_argument("input_value", help="A single YouTube URL or a path to a batch file.")
     parser.add_argument(
@@ -66,12 +70,16 @@ def image_exists() -> bool:
     docker_binary = docker_runner.resolve_docker_binary()
     if docker_binary is None:
         return False
-    completed = subprocess.run(
-        [docker_binary, "image", "inspect", docker_runner.IMAGE_NAME],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            [docker_binary, "image", "inspect", docker_runner.IMAGE_NAME],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=DOCKER_COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return False
     return completed.returncode == 0
 
 
@@ -79,12 +87,16 @@ def docker_daemon_ready() -> bool:
     docker_binary = docker_runner.resolve_docker_binary()
     if docker_binary is None:
         return False
-    completed = subprocess.run(
-        [docker_binary, "info"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            [docker_binary, "info"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=DOCKER_COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return False
     return completed.returncode == 0
 
 
@@ -100,6 +112,47 @@ def wait_for_docker(timeout_seconds: int = 120) -> int:
         file=sys.stderr,
     )
     return 1
+
+
+def docker_desktop_status() -> Optional[str]:
+    docker_binary = docker_runner.resolve_docker_binary()
+    if docker_binary is None:
+        return None
+    try:
+        completed = subprocess.run(
+            [docker_binary, "desktop", "status"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+            timeout=DOCKER_COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    if completed.returncode != 0:
+        return None
+    for line in completed.stdout.splitlines():
+        key, separator, value = line.partition(" ")
+        if separator and key.strip().lower() == "status":
+            return value.strip().lower() or None
+    return None
+
+
+def run_docker_desktop_command(action: str) -> int:
+    docker_binary = docker_runner.resolve_docker_binary()
+    if docker_binary is None:
+        return 1
+    try:
+        return subprocess.run(
+            [docker_binary, "desktop", action],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=180,
+        ).returncode
+    except subprocess.TimeoutExpired:
+        print("Timed out while trying to {action} Docker Desktop.".format(action=action), file=sys.stderr)
+        return 1
 
 
 def resolve_brew_binary() -> Optional[str]:
@@ -135,16 +188,31 @@ def install_homebrew() -> int:
 
 
 def start_docker_desktop() -> int:
+    status = docker_desktop_status()
+    if status == "running":
+        print("Docker Desktop is running, but the Docker daemon is not healthy. Restarting Docker Desktop...", file=sys.stderr)
+        restart_code = run_docker_desktop_command("restart")
+        if restart_code != 0:
+            print("Failed to restart Docker Desktop. Quit Docker Desktop completely, reopen it, and run the command again.", file=sys.stderr)
+            return restart_code
+        return wait_for_docker()
+
     print("Starting Docker Desktop...", file=sys.stderr)
-    start_code = subprocess.run(
-        ["open", "-a", DOCKER_APP_NAME],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    ).returncode
+    start_code = run_docker_desktop_command("start")
     if start_code != 0:
-        print("Failed to launch Docker Desktop.", file=sys.stderr)
-        return start_code
+        try:
+            start_code = subprocess.run(
+                ["open", "-a", DOCKER_APP_NAME],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=DOCKER_COMMAND_TIMEOUT_SECONDS,
+            ).returncode
+        except subprocess.TimeoutExpired:
+            start_code = 1
+        if start_code != 0:
+            print("Failed to launch Docker Desktop. Open Docker Desktop manually, wait until it says it is running, and run the command again.", file=sys.stderr)
+            return start_code
     return wait_for_docker()
 
 
@@ -200,12 +268,40 @@ def ensure_docker_available() -> tuple[int, bool]:
 
 
 def run_conversion(mode: str, value: str) -> int:
+    print("Starting conversion in {mode} mode...".format(mode=mode), file=sys.stderr)
     with tempfile.TemporaryDirectory() as temp_dir:
         value_file = Path(temp_dir) / "input.txt"
         value_file.write_text(value, encoding="utf-8")
         if mode == "batch":
             return docker_runner.run_batch(value_file)
         return docker_runner.run_single(value_file)
+
+
+def _list_pdf_outputs(output_dir: Path) -> set[Path]:
+    if not output_dir.exists():
+        return set()
+    return {path.resolve() for path in output_dir.glob("*.pdf") if path.is_file()}
+
+
+def _open_macos_outputs(output_dir: Path, pdf_paths: Sequence[Path]) -> None:
+    if sys.platform != "darwin":
+        return
+
+    open_commands = [["open", str(output_dir)]]
+    open_commands.extend([["open", "-a", "Preview", str(path)] for path in pdf_paths])
+
+    for command in open_commands:
+        completed = subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if completed.returncode != 0:
+            print(
+                "Could not open {target} automatically.".format(target=command[-1]),
+                file=sys.stderr,
+            )
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -231,8 +327,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if build_code != 0:
                 return build_code
 
+        output_dir = docker_runner.DEFAULT_OUTPUT_DIR
+        before_pdfs = _list_pdf_outputs(output_dir)
         exit_code = run_conversion(mode, value)
         if exit_code == 0:
+            after_pdfs = _list_pdf_outputs(output_dir)
+            new_pdfs = sorted(after_pdfs - before_pdfs, key=lambda path: path.stat().st_mtime)
+            _open_macos_outputs(output_dir, new_pdfs)
             print("Finished. Output is in {path}".format(path=docker_runner.DEFAULT_OUTPUT_DIR))
             print("The conversion container has already exited and been removed.")
         return exit_code

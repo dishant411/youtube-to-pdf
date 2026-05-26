@@ -1,6 +1,6 @@
 # YouTube to PDF
 
-This project builds a Dockerized transcript-to-PDF workflow for YouTube videos. It accepts either a single video URL or a text file with one URL per line, fetches only YouTube-provided transcripts, formats the text into readable prose, and writes outputs into `~/Downloads/youtube-to-pdf/`.
+This project builds a Dockerized transcript-to-PDF workflow for YouTube videos. It accepts either a single video URL or a text file with one URL per line, fetches only YouTube-provided transcripts, formats the text into readable prose, and writes outputs into `~/Documents/youtube-to-pdf/`.
 
 ## Prerequisites
 
@@ -24,7 +24,7 @@ What each command does:
 
 - `make doctor`: checks that Docker is installed, reachable, and that the Docker daemon is responding.
 - `make build`: builds the local Docker image `youtube-to-pdf:local` from this repository.
-- `make run URL='https://youtu.be/dQw4w9WgXcQ'`: runs one single YouTube URL through the converter and writes the PDF output into `~/Downloads/youtube-to-pdf/`.
+- `make run URL='https://youtu.be/dQw4w9WgXcQ'`: runs one single YouTube URL through the converter and writes the PDF output into `~/Documents/youtube-to-pdf/`.
 - `make batch FILE='examples/urls.txt'`: reads a text file with one URL per line and processes them as a batch job.
 - `make test`: builds the image if needed and runs the test suite inside Docker.
 - `make clean`: removes local temporary files created by the repo, such as `.make`, `.pytest_cache`, and Python `__pycache__` directories.
@@ -132,7 +132,7 @@ An example file is provided at `examples/urls.txt`.
 Outputs are written to:
 
 ```text
-~/Downloads/youtube-to-pdf/
+~/Documents/youtube-to-pdf/
 ```
 
 Each successful video produces:

@@ -10,16 +10,28 @@ from typing import List, Optional, Sequence
 
 IMAGE_NAME = "youtube-to-pdf:local"
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUTPUT_DIR = Path.home() / "Downloads" / "youtube-to-pdf"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from app.env_loader import load_repo_env
+
+DEFAULT_OUTPUT_DIR = Path.home() / "Documents" / "youtube-to-pdf"
 DOCKER_CLI_CANDIDATES = [
     Path("/Applications/Docker.app/Contents/Resources/bin/docker"),
     Path("/usr/local/bin/docker"),
     Path("/opt/homebrew/bin/docker"),
 ]
+PASSTHROUGH_ENV_VARS = [
+    "OPENAI_API_KEY",
+    "OPENAI_MODEL",
+    "OPENAI_TIMEOUT_SECONDS",
+]
+
+load_repo_env()
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run the youtube-to-pdf Docker workflow safely.")
+    parser = argparse.ArgumentParser(description="Run the youtube-to-pdf summary Docker workflow safely.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("doctor")
@@ -69,6 +81,27 @@ def run_subprocess(command: Sequence[str]) -> int:
     return completed.returncode
 
 
+def image_exists() -> bool:
+    docker_binary = resolve_docker_binary()
+    if docker_binary is None:
+        return False
+
+    completed = subprocess.run(
+        [docker_binary, "image", "inspect", IMAGE_NAME],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
+def ensure_image(rebuild: bool = False) -> int:
+    if rebuild or not image_exists():
+        print("Building Docker image {image}...".format(image=IMAGE_NAME), file=sys.stderr)
+        return build()
+    return 0
+
+
 def doctor() -> int:
     try:
         version_command = docker_command("version")
@@ -100,6 +133,10 @@ def build() -> int:
 
 
 def test() -> int:
+    build_code = ensure_image()
+    if build_code != 0:
+        return build_code
+
     return run_subprocess(
         docker_command(
             "run",
@@ -117,9 +154,10 @@ def test() -> int:
 
 
 def _runtime_prefix(output_dir: Path) -> List[str]:
-    return docker_command(
+    command = docker_command(
         "run",
         "--rm",
+        "--network=host",
         "--read-only",
         "--tmpfs",
         "/tmp:rw,noexec,nosuid,size=64m",
@@ -133,9 +171,18 @@ def _runtime_prefix(output_dir: Path) -> List[str]:
         "--mount",
         "type=bind,src={src},dst=/output".format(src=output_dir),
     )
+    for env_var in PASSTHROUGH_ENV_VARS:
+        value = os.environ.get(env_var)
+        if value:
+            command.extend(["--env", "{name}={value}".format(name=env_var, value=value)])
+    return command
 
 
 def run_single(value_file: Path) -> int:
+    build_code = ensure_image()
+    if build_code != 0:
+        return build_code
+
     url = read_value_file(value_file)
     output_dir = ensure_output_dir()
     command = _runtime_prefix(output_dir) + [
@@ -149,6 +196,10 @@ def run_single(value_file: Path) -> int:
 
 
 def run_batch(value_file: Path) -> int:
+    build_code = ensure_image()
+    if build_code != 0:
+        return build_code
+
     batch_file = Path(read_value_file(value_file)).expanduser().resolve()
     if not batch_file.exists() or not batch_file.is_file():
         print("Batch file does not exist: {path}".format(path=batch_file), file=sys.stderr)

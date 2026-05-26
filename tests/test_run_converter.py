@@ -38,6 +38,23 @@ class RunConverterTests(unittest.TestCase):
                         self.assertEqual(run_converter.ensure_docker_available(), (0, True))
                         start_docker.assert_called_once_with()
 
+    def test_start_docker_desktop_restarts_unhealthy_running_desktop(self) -> None:
+        with mock.patch("run_converter.docker_desktop_status", return_value="running"):
+            with mock.patch("run_converter.run_docker_desktop_command", return_value=0) as desktop_command:
+                with mock.patch("run_converter.wait_for_docker", return_value=0) as wait_for_docker:
+                    self.assertEqual(run_converter.start_docker_desktop(), 0)
+                    desktop_command.assert_called_once_with("restart")
+                    wait_for_docker.assert_called_once_with()
+
+    def test_start_docker_desktop_uses_desktop_cli_before_open_app(self) -> None:
+        with mock.patch("run_converter.docker_desktop_status", return_value=None):
+            with mock.patch("run_converter.run_docker_desktop_command", return_value=0) as desktop_command:
+                with mock.patch("run_converter.wait_for_docker", return_value=0):
+                    with mock.patch("run_converter.subprocess.run") as run_subprocess:
+                        self.assertEqual(run_converter.start_docker_desktop(), 0)
+                        desktop_command.assert_called_once_with("start")
+                        run_subprocess.assert_not_called()
+
     def test_ensure_docker_available_installs_homebrew_then_docker(self) -> None:
         with mock.patch("run_converter.docker_daemon_ready", return_value=False):
             with mock.patch("run_converter.sys.platform", "darwin"):
@@ -83,9 +100,50 @@ class RunConverterTests(unittest.TestCase):
                 with mock.patch("run_converter.docker_runner.doctor", return_value=0):
                     with mock.patch("run_converter.image_exists", return_value=True):
                         with mock.patch("run_converter.run_conversion", return_value=0):
-                            with mock.patch("run_converter.stop_docker_desktop", return_value=0) as stop_docker:
-                                self.assertEqual(run_converter.main(["https://youtu.be/dQw4w9WgXcQ"]), 0)
-                                stop_docker.assert_called_once_with()
+                            with mock.patch("run_converter._open_macos_outputs"):
+                                with mock.patch("run_converter.stop_docker_desktop", return_value=0) as stop_docker:
+                                    self.assertEqual(run_converter.main(["https://youtu.be/dQw4w9WgXcQ"]), 0)
+                                    stop_docker.assert_called_once_with()
+
+    def test_main_opens_finder_and_new_pdf_after_success(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            existing_pdf = output_dir / "existing.pdf"
+            new_pdf = output_dir / "new.pdf"
+            existing_pdf.write_bytes(b"%PDF-1.4\n")
+
+            def fake_run_conversion(_mode: str, _value: str) -> int:
+                new_pdf.write_bytes(b"%PDF-1.4\n")
+                return 0
+
+            with mock.patch("run_converter.detect_mode", return_value=("single", "https://youtu.be/dQw4w9WgXcQ")):
+                with mock.patch("run_converter.ensure_docker_available", return_value=(0, False)):
+                    with mock.patch("run_converter.docker_runner.doctor", return_value=0):
+                        with mock.patch("run_converter.image_exists", return_value=True):
+                            with mock.patch("run_converter.docker_runner.DEFAULT_OUTPUT_DIR", output_dir):
+                                with mock.patch("run_converter.run_conversion", side_effect=fake_run_conversion):
+                                    with mock.patch("run_converter._open_macos_outputs") as open_outputs:
+                                        self.assertEqual(run_converter.main(["https://youtu.be/dQw4w9WgXcQ"]), 0)
+                                        open_outputs.assert_called_once_with(output_dir, [new_pdf.resolve()])
+
+    def test_open_macos_outputs_opens_finder_and_preview(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            pdf_path = output_dir / "new.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4\n")
+
+            with mock.patch("run_converter.sys.platform", "darwin"):
+                with mock.patch("run_converter.subprocess.run") as run_subprocess:
+                    run_subprocess.return_value.returncode = 0
+                    run_converter._open_macos_outputs(output_dir, [pdf_path])
+
+            self.assertEqual(
+                [call.args[0] for call in run_subprocess.call_args_list],
+                [
+                    ["open", str(output_dir)],
+                    ["open", "-a", "Preview", str(pdf_path)],
+                ],
+            )
 
 
 if __name__ == "__main__":

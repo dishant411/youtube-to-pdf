@@ -1,0 +1,18 @@
+{
+  "name": "youtube-to-pdf",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Low-cost Node backend for YouTube transcript executive summaries and local PDF generation.",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "summarize:simple": "node node-backend/simple-cli.js",
+    "summarize:scalable": "node node-backend/scalable-cli.js"
+  },
+  "dependencies": {
+    "marked": "^14.1.2",
+    "openai": "^4.79.0",
+    "puppeteer": "^23.4.1"
+  }
+}

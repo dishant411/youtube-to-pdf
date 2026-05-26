@@ -3,6 +3,7 @@
 __pycache__
 .DS_Store
 .make
+.env
 *.pyc
 *.pyo
 *.pyd
@@ -11,4 +12,3 @@ __pycache__
 dist
 build
 htmlcov
-

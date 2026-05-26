@@ -1,0 +1,26 @@
+{
+  "title": "How to Build a Lean Transcript Summarizer",
+  "url": "https://www.youtube.com/watch?v=abcdefghijk",
+  "transcript": [
+    {
+      "text": "In this video I am going to show you how to summarize long transcripts without paying for unnecessary tokens.",
+      "start": 0,
+      "duration": 6.2
+    },
+    {
+      "text": "The first step is cleaning duplicate caption fragments and removing low signal filler.",
+      "start": 8.1,
+      "duration": 5.1
+    },
+    {
+      "text": "Then we keep timestamps only every few minutes so the model can still anchor key moments.",
+      "start": 45.6,
+      "duration": 4.8
+    },
+    {
+      "text": "For very long videos we summarize chunks first and combine those summaries into a final executive summary.",
+      "start": 185.4,
+      "duration": 6.7
+    }
+  ]
+}

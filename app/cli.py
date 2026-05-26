@@ -8,7 +8,8 @@ from typing import List, Optional, Sequence
 
 from app.formatting import build_output_stem, build_timestamped_paragraphs
 from app.models import VideoReference
-from app.pdf import render_pdf
+from app.openai_summary import SummaryGenerationError, summarize_transcript
+from app.pdf import render_pdf, render_summary_pdf
 from app.youtube import (
     TranscriptUnavailableError,
     VideoValidationError,
@@ -20,11 +21,17 @@ from app.youtube import (
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Convert YouTube transcripts into PDFs.")
+    parser = argparse.ArgumentParser(description="Convert YouTube videos into summary or transcript PDFs.")
     source_group = parser.add_mutually_exclusive_group(required=True)
     source_group.add_argument("--url", help="One accepted YouTube video URL.")
     source_group.add_argument("--batch-file", help="Path to a UTF-8 file containing one URL per line.")
     parser.add_argument("--output-dir", required=True, help="Directory where output files should be written.")
+    parser.add_argument(
+        "--mode",
+        choices=["summary", "transcript"],
+        default="summary",
+        help="Generate a summary PDF or the legacy full transcript PDF.",
+    )
     return parser
 
 
@@ -58,20 +65,45 @@ def _resolve_pdf_path(output_dir: Path, title: str) -> Path:
         suffix += 1
 
 
-def _process_reference(reference: VideoReference, output_dir: Path, generated_at: str) -> None:
+def _process_reference(reference: VideoReference, output_dir: Path, generated_at: str, mode: str) -> None:
+    print(
+        "Processing {url} in {mode} mode...".format(url=reference.canonical_url, mode=mode),
+        file=sys.stderr,
+    )
     segments, language = fetch_transcript_data(reference.video_id)
     title = fetch_video_title(reference.canonical_url) or "video"
     pdf_path = _resolve_pdf_path(output_dir, title)
-    paragraphs = build_timestamped_paragraphs(segments)
 
-    render_pdf(
+    if mode == "transcript":
+        print("Rendering transcript PDF for {title}...".format(title=title), file=sys.stderr)
+        paragraphs = build_timestamped_paragraphs(segments)
+        render_pdf(
+            output_path=pdf_path,
+            title=title,
+            canonical_url=reference.canonical_url,
+            language=language,
+            generated_at=generated_at,
+            paragraphs=paragraphs,
+        )
+        print("Wrote PDF: {path}".format(path=pdf_path), file=sys.stderr)
+        return
+
+    print("Generating executive summary for {title}...".format(title=title), file=sys.stderr)
+    summary_text, model = summarize_transcript(
+        title=title,
+        canonical_url=reference.canonical_url,
+        segments=segments,
+    )
+    print("Rendering summary PDF for {title}...".format(title=title), file=sys.stderr)
+    render_summary_pdf(
         output_path=pdf_path,
         title=title,
         canonical_url=reference.canonical_url,
-        language=language,
         generated_at=generated_at,
-        paragraphs=paragraphs,
+        model=model,
+        summary_text=summary_text,
     )
+    print("Wrote PDF: {path}".format(path=pdf_path), file=sys.stderr)
 
 
 def _resolve_references(source_inputs: Sequence[str]) -> tuple[List[VideoReference], List[str]]:
@@ -96,13 +128,14 @@ def _record_duplicate_skips(references: Sequence[VideoReference]) -> List[str]:
     return results
 
 
-def run_single(url: str, output_dir: Path, generated_at: str) -> int:
+def run_single(url: str, output_dir: Path, generated_at: str, mode: str) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     _remove_legacy_json_outputs(output_dir)
+    print("Starting single video job...", file=sys.stderr)
 
     try:
         reference = parse_video_reference(url)
-        _process_reference(reference, output_dir, generated_at)
+        _process_reference(reference, output_dir, generated_at, mode)
         return 0
     except VideoValidationError as exc:
         print(str(exc), file=sys.stderr)
@@ -110,11 +143,15 @@ def run_single(url: str, output_dir: Path, generated_at: str) -> int:
     except TranscriptUnavailableError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    except SummaryGenerationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
 
-def run_batch(batch_file: Path, output_dir: Path, generated_at: str) -> int:
+def run_batch(batch_file: Path, output_dir: Path, generated_at: str, mode: str) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     _remove_legacy_json_outputs(output_dir)
+    print("Starting batch job from {path}...".format(path=batch_file), file=sys.stderr)
 
     if not batch_file.exists() or not batch_file.is_file():
         print("Batch file does not exist or is not a file.", file=sys.stderr)
@@ -134,8 +171,13 @@ def run_batch(batch_file: Path, output_dir: Path, generated_at: str) -> int:
 
     for reference in dedupe_references(references):
         try:
-            _process_reference(reference, output_dir, generated_at)
+            _process_reference(reference, output_dir, generated_at, mode)
         except TranscriptUnavailableError as exc:
+            print(
+                "Skipping {url}: {message}".format(url=reference.raw_input, message=exc),
+                file=sys.stderr,
+            )
+        except SummaryGenerationError as exc:
             print(
                 "Skipping {url}: {message}".format(url=reference.raw_input, message=exc),
                 file=sys.stderr,
@@ -150,8 +192,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     generated_at = datetime.now(timezone.utc).isoformat()
 
     if args.url:
-        return run_single(args.url, output_dir, generated_at)
-    return run_batch(Path(args.batch_file).expanduser().resolve(), output_dir, generated_at)
+        return run_single(args.url, output_dir, generated_at, args.mode)
+    return run_batch(Path(args.batch_file).expanduser().resolve(), output_dir, generated_at, args.mode)
 
 
 if __name__ == "__main__":

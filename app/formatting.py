@@ -80,6 +80,107 @@ def format_timestamp(seconds: float) -> str:
     )
 
 
+NOISE_PATTERNS = [
+    re.compile(r"^\[(music|applause|laughter|silence|background music)\]$", re.IGNORECASE),
+    re.compile(r"^\((music|applause|laughter|silence|background music)\)$", re.IGNORECASE),
+]
+FILLER_ONLY_RE = re.compile(
+    r"^(uh|um|hmm|mm-hmm|mm|ah|er|you know|like|so|okay|ok|right|well)[.!?]*$",
+    re.IGNORECASE,
+)
+
+
+def is_low_signal_segment(text: str) -> bool:
+    cleaned = clean_segment_text(text)
+    if not cleaned:
+        return True
+    if any(pattern.match(cleaned) for pattern in NOISE_PATTERNS):
+        return True
+    if len(cleaned.split()) <= 3 and FILLER_ONLY_RE.match(cleaned):
+        return True
+    return False
+
+
+def clean_transcript_segments(
+    segments: Iterable[TranscriptSegment],
+    drop_low_signal: bool = True,
+    dedupe_adjacent: bool = True,
+) -> List[TranscriptSegment]:
+    cleaned_segments = []
+    previous_text = None
+
+    for segment in segments:
+        cleaned_text = clean_segment_text(segment.text)
+        if not cleaned_text:
+            continue
+        if drop_low_signal and is_low_signal_segment(cleaned_text):
+            continue
+        if dedupe_adjacent and previous_text == cleaned_text:
+            continue
+        cleaned_segments.append(
+            TranscriptSegment(text=cleaned_text, start=max(0.0, segment.start), duration=max(0.0, segment.duration))
+        )
+        previous_text = cleaned_text
+
+    return cleaned_segments
+
+
+def build_summary_blocks(
+    segments: Iterable[TranscriptSegment],
+    pause_threshold: float = 8.0,
+    max_block_length: int = 900,
+    timestamp_interval_seconds: int = 180,
+    preserve_timestamps: bool = True,
+) -> List[Tuple[Optional[str], str]]:
+    blocks = []
+    current_text = ""
+    current_label = None
+    previous_end = None
+    last_timestamp_start = None
+
+    for segment in clean_transcript_segments(segments):
+        should_break = False
+        if previous_end is not None and segment.start - previous_end >= pause_threshold:
+            should_break = True
+        if current_text and len(current_text) >= max_block_length:
+            should_break = True
+        if (
+            preserve_timestamps
+            and current_text
+            and last_timestamp_start is not None
+            and segment.start - last_timestamp_start >= timestamp_interval_seconds
+        ):
+            should_break = True
+
+        if should_break and current_text:
+            blocks.append((current_label, current_text))
+            current_text = ""
+            current_label = None
+
+        if not current_text and preserve_timestamps:
+            if last_timestamp_start is None or segment.start - last_timestamp_start >= timestamp_interval_seconds:
+                current_label = format_timestamp(segment.start)
+                last_timestamp_start = segment.start
+
+        current_text = join_with_spacing(current_text, segment.text)
+        previous_end = segment.start + segment.duration
+
+    if current_text:
+        blocks.append((current_label, current_text))
+
+    return blocks
+
+
+def blocks_to_compact_text(blocks: Iterable[Tuple[Optional[str], str]]) -> str:
+    formatted_blocks = []
+    for timestamp_label, paragraph in blocks:
+        if timestamp_label:
+            formatted_blocks.append("[{label}] {paragraph}".format(label=timestamp_label, paragraph=paragraph))
+        else:
+            formatted_blocks.append(paragraph)
+    return "\n\n".join(formatted_blocks)
+
+
 def build_timestamped_paragraphs(
     segments: Iterable[TranscriptSegment],
     pause_threshold: float = 6.0,

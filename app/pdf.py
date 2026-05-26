@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import html
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
+from xml.etree import ElementTree as ET
 
 
 def _wrap_word(
@@ -68,6 +70,62 @@ def _register_body_font(ttfonts, pdfmetrics) -> str:
     except Exception:
         pass
     return "Times-Roman"
+
+
+def _normalize_reportlab_markup(tag: str, content: str) -> str:
+    if tag in {"strong", "b"}:
+        return "<b>{content}</b>".format(content=content)
+    if tag in {"em", "i"}:
+        return "<i>{content}</i>".format(content=content)
+    if tag == "code":
+        return '<font name="Courier">{content}</font>'.format(content=content)
+    return content
+
+
+def _render_inline_html(node: ET.Element) -> str:
+    parts: List[str] = []
+    if node.text:
+        parts.append(html.escape(node.text, quote=False))
+
+    for child in list(node):
+        child_content = _render_inline_html(child)
+        parts.append(_normalize_reportlab_markup(child.tag.lower(), child_content))
+        if child.tail:
+            parts.append(html.escape(child.tail, quote=False))
+
+    return "".join(parts)
+
+
+def _markdown_to_summary_blocks(summary_text: str) -> List[dict[str, object]]:
+    import markdown
+
+    rendered_summary = markdown.markdown(
+        summary_text or "",
+        extensions=["extra", "sane_lists"],
+        output_format="html5",
+    )
+    root = ET.fromstring("<root>{content}</root>".format(content=rendered_summary))
+    blocks: List[dict[str, object]] = []
+
+    for child in list(root):
+        tag = child.tag.lower()
+        if tag in {"h1", "h2", "h3"}:
+            blocks.append({"type": "heading", "level": int(tag[1]), "text": _render_inline_html(child)})
+            continue
+        if tag == "p":
+            blocks.append({"type": "paragraph", "text": _render_inline_html(child)})
+            continue
+        if tag in {"ul", "ol"}:
+            items = []
+            for item in list(child):
+                if item.tag.lower() == "li":
+                    items.append(_render_inline_html(item))
+            blocks.append({"type": "list", "ordered": tag == "ol", "items": items})
+            continue
+        if tag == "blockquote":
+            blocks.append({"type": "blockquote", "text": _render_inline_html(child)})
+
+    return blocks
 
 
 def render_pdf(
@@ -158,3 +216,183 @@ def render_pdf(
 
     draw_footer(page_number)
     pdf.save()
+
+
+def render_summary_pdf(
+    output_path: Path,
+    title: str,
+    canonical_url: str,
+    generated_at: str,
+    model: str,
+    summary_text: str,
+) -> None:
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_LEFT
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase import ttfonts
+    from reportlab.platypus import ListFlowable, ListItem, Paragraph, SimpleDocTemplate, Spacer
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    margin = 0.75 * inch
+    body_font = _register_body_font(ttfonts, pdfmetrics)
+    styles = getSampleStyleSheet()
+    styles.add(
+        ParagraphStyle(
+            name="SummaryTitle",
+            parent=styles["Title"],
+            fontName="Times-Bold",
+            fontSize=18,
+            leading=22,
+            spaceAfter=10,
+            textColor=colors.black,
+            alignment=TA_LEFT,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SummaryMeta",
+            parent=styles["Normal"],
+            fontName="Times-Roman",
+            fontSize=9,
+            leading=12,
+            spaceAfter=2,
+            textColor=colors.HexColor("#444444"),
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SummaryBody",
+            parent=styles["Normal"],
+            fontName=body_font,
+            fontSize=11,
+            leading=15,
+            spaceAfter=8,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SummaryBlockquote",
+            parent=styles["Normal"],
+            fontName=body_font,
+            fontSize=11,
+            leading=15,
+            leftIndent=14,
+            borderPadding=8,
+            borderWidth=0,
+            borderColor=colors.HexColor("#d0d5dd"),
+            backColor=colors.HexColor("#f8fafc"),
+            textColor=colors.HexColor("#344054"),
+            spaceBefore=4,
+            spaceAfter=8,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SummaryHeading1",
+            parent=styles["Heading1"],
+            fontName="Times-Bold",
+            fontSize=17,
+            leading=20,
+            spaceBefore=8,
+            spaceAfter=8,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SummaryHeading2",
+            parent=styles["Heading2"],
+            fontName="Times-Bold",
+            fontSize=13,
+            leading=16,
+            spaceBefore=6,
+            spaceAfter=6,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SummaryHeading3",
+            parent=styles["Heading3"],
+            fontName="Times-Bold",
+            fontSize=11,
+            leading=14,
+            spaceBefore=4,
+            spaceAfter=4,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="SummaryListItem",
+            parent=styles["Normal"],
+            fontName=body_font,
+            fontSize=11,
+            leading=15,
+            leftIndent=0,
+            spaceAfter=2,
+        )
+    )
+
+    doc = SimpleDocTemplate(
+        str(output_path),
+        pagesize=LETTER,
+        leftMargin=margin,
+        rightMargin=margin,
+        topMargin=margin,
+        bottomMargin=margin,
+        title=title,
+        author="youtube-to-pdf",
+    )
+
+    story = [
+        Paragraph(html.escape(title), styles["SummaryTitle"]),
+        Paragraph("Source: {url}".format(url=html.escape(canonical_url)), styles["SummaryMeta"]),
+        Paragraph("Generated: {generated_at}".format(generated_at=html.escape(generated_at)), styles["SummaryMeta"]),
+        Paragraph("Model: {model}".format(model=html.escape(model)), styles["SummaryMeta"]),
+        Spacer(1, 10),
+    ]
+
+    heading_style_names = {
+        1: "SummaryHeading1",
+        2: "SummaryHeading2",
+        3: "SummaryHeading3",
+    }
+
+    for block in _markdown_to_summary_blocks(summary_text):
+        block_type = str(block["type"])
+        if block_type == "heading":
+            level = int(block["level"])
+            story.append(Paragraph(str(block["text"]), styles[heading_style_names.get(level, "SummaryHeading3")]))
+            continue
+        if block_type == "paragraph":
+            story.append(Paragraph(str(block["text"]), styles["SummaryBody"]))
+            continue
+        if block_type == "blockquote":
+            story.append(Paragraph(str(block["text"]), styles["SummaryBlockquote"]))
+            continue
+        if block_type == "list":
+            items = [
+                ListItem(Paragraph(str(item), styles["SummaryListItem"]))
+                for item in block["items"]
+            ]
+            story.append(
+                ListFlowable(
+                    items,
+                    bulletType="1" if bool(block["ordered"]) else "bullet",
+                    leftIndent=16,
+                    bulletFontName=body_font,
+                    bulletFontSize=11,
+                    bulletOffsetY=2,
+                )
+            )
+            story.append(Spacer(1, 6))
+
+    def draw_footer(canvas, doc) -> None:
+        canvas.saveState()
+        canvas.setFont("Times-Roman", 9)
+        canvas.drawRightString(doc.pagesize[0] - margin, 0.5 * inch, "Page {page}".format(page=canvas.getPageNumber()))
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)

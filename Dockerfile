@@ -13,8 +13,8 @@ RUN python -m pip install --no-cache-dir -r /app/requirements.txt
 COPY app /app/app
 COPY tests /app/tests
 COPY examples /app/examples
+COPY node-backend/prompts /app/node-backend/prompts
 
 USER 65532:65532
 
 ENTRYPOINT ["python", "-m", "app.cli"]
-
