@@ -180,7 +180,7 @@ Each successful video produces:
 - Single URL mode fails closed if no transcript is available.
 - Batch mode skips missing transcripts and keeps going.
 - English transcripts are summarized directly.
-- Hindi auto-generated transcripts are fetched when English is unavailable, translated literally into English, and then summarized from that English translation.
+- Hindi auto-generated transcripts are fetched when English is unavailable, summarized first, and then the shorter summary is translated into polished English.
 - The PDF title uses the clean YouTube title, not the video ID or link.
 - The full YouTube URL is printed near the top of the PDF.
 - The transcript body is optimized for readability.

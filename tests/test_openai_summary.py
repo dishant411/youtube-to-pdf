@@ -55,10 +55,10 @@ class OpenAISummaryTests(unittest.TestCase):
         self.assertEqual(model, "gpt-5.4-nano")
         self.assertEqual(mocked_urlopen.call_count, 1)
 
-    def test_hindi_transcript_is_translated_before_summary(self) -> None:
+    def test_hindi_transcript_is_summarized_before_translation(self) -> None:
         with mock.patch("app.openai_summary.request_summary_text") as request_text:
             request_text.side_effect = [
-                ("[00:00] Hello everyone.", "gpt-5.4-nano"),
+                ("## कार्यकारी सारांश\nहिंदी सारांश।", "gpt-5.4-nano"),
                 ("## Executive Summary\nEnglish summary.", "gpt-5.4-nano"),
             ]
             summary_text, model = summarize_transcript(
@@ -71,12 +71,13 @@ class OpenAISummaryTests(unittest.TestCase):
         self.assertIn("English summary", summary_text)
         self.assertEqual(model, "gpt-5.4-nano")
         self.assertEqual(request_text.call_count, 2)
-        translation_prompt = request_text.call_args_list[0].args[0]
-        summary_prompt = request_text.call_args_list[1].args[0]
-        self.assertIn("Translate this YouTube transcript chunk into English", translation_prompt)
+        source_summary_prompt = request_text.call_args_list[0].args[0]
+        translation_prompt = request_text.call_args_list[1].args[0]
+        self.assertIn("Create a concise executive summary", source_summary_prompt)
+        self.assertIn("नमस्ते", source_summary_prompt)
+        self.assertIn("Translate this video summary into polished professional English", translation_prompt)
         self.assertIn("Source language: hi", translation_prompt)
-        self.assertIn("[00:00] Hello everyone.", summary_prompt)
-        self.assertNotIn("नमस्ते", summary_prompt)
+        self.assertIn("हिंदी सारांश", translation_prompt)
 
 
 if __name__ == "__main__":
