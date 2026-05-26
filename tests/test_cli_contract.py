@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
 import tempfile
 import unittest
+from subprocess import CompletedProcess
 from pathlib import Path
 from unittest import mock
 
@@ -211,7 +213,7 @@ class CliContractTests(unittest.TestCase):
             value_file = Path(temp_dir) / "value.txt"
             value_file.write_text("https://youtu.be/dQw4w9WgXcQ", encoding="utf-8")
 
-            with mock.patch.dict("os.environ", {"OPENAI_API_KEY": "secret", "OPENAI_MODEL": "gpt-5.4-nano"}, clear=False):
+            with mock.patch.dict("os.environ", {"OPENAI_API_KEY": "your_test_openai_key", "OPENAI_MODEL": "gpt-5.4-nano"}, clear=False):
                 with mock.patch("scripts.docker_runner.ensure_output_dir", return_value=Path("/tmp/out")):
                     with mock.patch("scripts.docker_runner.resolve_docker_binary", return_value="/usr/local/bin/docker"):
                         with mock.patch("scripts.docker_runner.image_exists", return_value=True):
@@ -221,7 +223,7 @@ class CliContractTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             docker_command = run_subprocess.call_args[0][0]
             self.assertIn("--env", docker_command)
-            self.assertIn("OPENAI_API_KEY=secret", docker_command)
+            self.assertIn("OPENAI_API_KEY=your_test_openai_key", docker_command)
             self.assertIn("OPENAI_MODEL=gpt-5.4-nano", docker_command)
 
     def test_docker_runtime_uses_hardened_flags(self) -> None:
@@ -258,6 +260,46 @@ class CliContractTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(run_subprocess.call_count, 2)
             self.assertEqual(run_subprocess.call_args_list[0].args[0][1:4], ["build", "--tag", docker_runner.IMAGE_NAME])
+
+    def test_write_test_report_summarizes_unittest_output(self) -> None:
+        output = "...\n----------------------------------------------------------------------\nRan 3 tests in 0.001s\n\nOK (skipped=1)\n"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch("scripts.docker_runner.TEST_REPORT_DIR", Path(temp_dir)):
+                report_path = docker_runner.write_test_report(
+                    ["python", "-m", "unittest"],
+                    output,
+                    0,
+                )
+
+            report_text = report_path.read_text(encoding="utf-8")
+
+        self.assertIn("| Status | PASS |", report_text)
+        self.assertIn("| Passed | 2 |", report_text)
+        self.assertIn("| Failed | 0 |", report_text)
+        self.assertIn("| Skipped | 1 |", report_text)
+        self.assertIn("## Raw Output", report_text)
+
+    def test_docker_test_writes_report_and_opens_vscode(self) -> None:
+        completed = CompletedProcess(
+            args=["docker"],
+            returncode=0,
+            stdout="Ran 1 test in 0.001s\n\nOK\n",
+            stderr="",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch("scripts.docker_runner.TEST_REPORT_DIR", Path(temp_dir)):
+                with mock.patch("scripts.docker_runner.ensure_image", return_value=0):
+                    with mock.patch("scripts.docker_runner.docker_command", return_value=["docker", "run", "tests"]):
+                        with mock.patch("scripts.docker_runner.run_subprocess_capture", return_value=completed):
+                            with mock.patch("scripts.docker_runner.open_report_in_vscode") as open_report:
+                                with mock.patch("sys.stdout", new_callable=io.StringIO):
+                                    with mock.patch("sys.stderr", new_callable=io.StringIO):
+                                        self.assertEqual(docker_runner.test(), 0)
+
+            report_paths = list(Path(temp_dir).glob("unit-test-report-*.md"))
+
+        self.assertEqual(len(report_paths), 1)
+        open_report.assert_called_once_with(report_paths[0])
 
 
 if __name__ == "__main__":

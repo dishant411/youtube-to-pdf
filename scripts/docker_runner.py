@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Sequence
 
@@ -16,11 +18,13 @@ if str(REPO_ROOT) not in sys.path:
 from app.env_loader import load_repo_env
 
 DEFAULT_OUTPUT_DIR = Path.home() / "Documents" / "youtube-to-pdf"
+TEST_REPORT_DIR = REPO_ROOT / "test-reports"
 DOCKER_CLI_CANDIDATES = [
     Path("/Applications/Docker.app/Contents/Resources/bin/docker"),
     Path("/usr/local/bin/docker"),
     Path("/opt/homebrew/bin/docker"),
 ]
+VSCODE_APP_NAME = "Visual Studio Code"
 PASSTHROUGH_ENV_VARS = [
     "OPENAI_API_KEY",
     "OPENAI_MODEL",
@@ -81,6 +85,16 @@ def run_subprocess(command: Sequence[str]) -> int:
     return completed.returncode
 
 
+def run_subprocess_capture(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        list(command),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+
+
 def image_exists() -> bool:
     docker_binary = resolve_docker_binary()
     if docker_binary is None:
@@ -132,25 +146,142 @@ def build() -> int:
     return run_subprocess(docker_command("build", "--tag", IMAGE_NAME, str(REPO_ROOT)))
 
 
+def _parse_unittest_counts(output: str, returncode: int) -> dict[str, int | str]:
+    ran_match = re.search(r"Ran (\d+) tests?", output)
+    total = int(ran_match.group(1)) if ran_match else 0
+    failed = 0
+    errors = 0
+    skipped = 0
+
+    summary_match = re.search(r"FAILED \(([^)]+)\)", output)
+    if summary_match:
+        for key, value in re.findall(r"(failures|errors|skipped)=(\d+)", summary_match.group(1)):
+            if key == "failures":
+                failed = int(value)
+            elif key == "errors":
+                errors = int(value)
+            elif key == "skipped":
+                skipped = int(value)
+    else:
+        ok_match = re.search(r"OK(?: \(([^)]+)\))?", output)
+        if ok_match and ok_match.group(1):
+            skipped_match = re.search(r"skipped=(\d+)", ok_match.group(1))
+            if skipped_match:
+                skipped = int(skipped_match.group(1))
+
+    passed = max(total - failed - errors - skipped, 0)
+    status = "PASS" if returncode == 0 else "FAIL"
+    return {
+        "status": status,
+        "total": total,
+        "passed": passed,
+        "failed": failed,
+        "errors": errors,
+        "skipped": skipped,
+    }
+
+
+def _bar(value: int, total: int, width: int = 24) -> str:
+    if total <= 0:
+        filled = 0
+    else:
+        filled = round((value / total) * width)
+    return "[{filled}{empty}]".format(filled="#" * filled, empty="." * (width - filled))
+
+
+def write_test_report(command: Sequence[str], output: str, returncode: int) -> Path:
+    TEST_REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    report_path = TEST_REPORT_DIR / "unit-test-report-{timestamp}.md".format(timestamp=timestamp)
+    counts = _parse_unittest_counts(output, returncode)
+    total = int(counts["total"])
+    passed = int(counts["passed"])
+    failed = int(counts["failed"])
+    errors = int(counts["errors"])
+    skipped = int(counts["skipped"])
+
+    report = [
+        "# Unit Test Report",
+        "",
+        "## Result",
+        "",
+        "| Metric | Count | Visual |",
+        "| --- | ---: | --- |",
+        "| Status | {status} | `{status_bar}` |".format(
+            status=counts["status"],
+            status_bar=_bar(total if returncode == 0 else failed + errors, max(total, 1)),
+        ),
+        "| Passed | {passed} | `{bar}` |".format(passed=passed, bar=_bar(passed, max(total, 1))),
+        "| Failed | {failed} | `{bar}` |".format(failed=failed, bar=_bar(failed, max(total, 1))),
+        "| Errors | {errors} | `{bar}` |".format(errors=errors, bar=_bar(errors, max(total, 1))),
+        "| Skipped | {skipped} | `{bar}` |".format(skipped=skipped, bar=_bar(skipped, max(total, 1))),
+        "| Total | {total} | `{bar}` |".format(total=total, bar=_bar(total, max(total, 1))),
+        "",
+        "## Command",
+        "",
+        "```text",
+        " ".join(command),
+        "```",
+        "",
+        "## Raw Output",
+        "",
+        "```text",
+        output.rstrip(),
+        "```",
+        "",
+    ]
+    report_path.write_text("\n".join(report), encoding="utf-8")
+    return report_path
+
+
+def open_report_in_vscode(report_path: Path) -> None:
+    code_binary = shutil.which("code")
+    commands = []
+    if code_binary:
+        commands.append([code_binary, "-n", str(report_path)])
+    if sys.platform == "darwin":
+        commands.append(["open", "-a", VSCODE_APP_NAME, str(report_path)])
+
+    for command in commands:
+        completed = subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if completed.returncode == 0:
+            return
+
+    print("Test report written to {path}".format(path=report_path))
+    print("VS Code could not be opened automatically.", file=sys.stderr)
+
+
 def test() -> int:
     build_code = ensure_image()
     if build_code != 0:
         return build_code
 
-    return run_subprocess(
-        docker_command(
-            "run",
-            "--rm",
-            "--entrypoint",
-            "python",
-            IMAGE_NAME,
-            "-m",
-            "unittest",
-            "discover",
-            "-s",
-            "tests",
-        )
+    command = docker_command(
+        "run",
+        "--rm",
+        "--entrypoint",
+        "python",
+        IMAGE_NAME,
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
     )
+    completed = run_subprocess_capture(command)
+    if completed.stdout:
+        print(completed.stdout, end="")
+    if completed.stderr:
+        print(completed.stderr, end="", file=sys.stderr)
+    combined_output = "{stdout}{stderr}".format(stdout=completed.stdout, stderr=completed.stderr)
+    report_path = write_test_report(command, combined_output, completed.returncode)
+    open_report_in_vscode(report_path)
+    return completed.returncode
 
 
 def _runtime_prefix(output_dir: Path) -> List[str]:

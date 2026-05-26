@@ -2,12 +2,47 @@
 
 This project builds a Dockerized transcript-to-PDF workflow for YouTube videos. It accepts either a single video URL or a text file with one URL per line, fetches only YouTube-provided transcripts, formats the text into readable prose, and writes outputs into `~/Documents/youtube-to-pdf/`.
 
+## Project Status
+
+This project is early-stage and intended for local use. The Dockerized Python workflow is the supported path. The Node backend is experimental and may change.
+
+## License
+
+This project is available under the MIT License. See `LICENSE`.
+
 ## Prerequisites
 
 - Docker Desktop or a compatible Docker Engine installed and running.
 - `make` and `python3` available on the host.
 
 Docker is required for all runtime work. The host does not need `pip`, `pandoc`, `yt-dlp`, or a Python virtual environment for this project to run.
+
+## Setup From A Fresh Clone
+
+```bash
+git clone https://github.com/dishant411/youtube-to-pdf.git
+cd youtube-to-pdf
+cp .env.example .env
+```
+
+Edit `.env` and set:
+
+```text
+OPENAI_API_KEY=your_openai_api_key
+```
+
+Then verify the environment:
+
+```bash
+make doctor
+make test
+```
+
+Run your first conversion:
+
+```bash
+make run URL='https://youtu.be/dQw4w9WgXcQ'
+```
 
 ## Commands
 
@@ -26,7 +61,7 @@ What each command does:
 - `make build`: builds the local Docker image `youtube-to-pdf:local` from this repository.
 - `make run URL='https://youtu.be/dQw4w9WgXcQ'`: runs one single YouTube URL through the converter and writes the PDF output into `~/Documents/youtube-to-pdf/`.
 - `make batch FILE='examples/urls.txt'`: reads a text file with one URL per line and processes them as a batch job.
-- `make test`: builds the image if needed and runs the test suite inside Docker.
+- `make test`: builds the image if needed, runs the test suite inside Docker, writes a Markdown report under `test-reports/`, and opens the report in VS Code when available.
 - `make clean`: removes local temporary files created by the repo, such as `.make`, `.pytest_cache`, and Python `__pycache__` directories.
 
 ## One-command runner
@@ -166,4 +201,11 @@ Each successful video produces:
 
 - Transcript-only in v1. There is no audio download or speech-to-text fallback.
 - Playlist and channel ingestion are not supported.
+- The Dockerized Python workflow is the supported runtime path; the Node backend is experimental.
 - This repository pins exact package versions, but hash-locked installs were not generated here because the current environment has no network path for fetching package artifacts. If you want strict `--require-hashes`, generate the final lock file from a networked environment before production use.
+
+## Contributing And Security
+
+See `CONTRIBUTING.md` for development workflow and pull request expectations.
+
+See `SECURITY.md` for vulnerability reporting and secret handling notes.

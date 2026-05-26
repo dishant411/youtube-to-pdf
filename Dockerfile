@@ -11,9 +11,11 @@ COPY requirements.txt /app/requirements.txt
 RUN python -m pip install --no-cache-dir -r /app/requirements.txt
 
 COPY app /app/app
+COPY scripts /app/scripts
 COPY tests /app/tests
 COPY examples /app/examples
 COPY node-backend/prompts /app/node-backend/prompts
+COPY run_converter.py /app/run_converter.py
 
 USER 65532:65532
 
