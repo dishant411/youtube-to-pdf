@@ -192,7 +192,7 @@ def translate_summary_to_english(
     summary_text: str,
     source_language: Optional[str],
     model: Optional[str] = None,
-    translation_max_output_tokens: int = 900,
+    translation_max_output_tokens: int = 3600,
 ) -> tuple[str, str]:
     print(
         "Translating {language} summary into English...".format(language=source_language or "non-English"),
@@ -225,7 +225,7 @@ def summarize_transcript(
     timestamp_interval_seconds: int = 180,
     final_input_token_budget: int = 2500,
     chunk_summary_max_output_tokens: int = 260,
-    final_summary_max_output_tokens: int = 700,
+    final_summary_max_output_tokens: int = 2800,
 ) -> tuple[str, str]:
     blocks = build_summary_blocks(
         segments,

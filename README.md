@@ -181,6 +181,7 @@ Each successful video produces:
 - Batch mode skips missing transcripts and keeps going.
 - English transcripts are summarized directly.
 - Hindi auto-generated transcripts are fetched when English is unavailable, summarized first, and then the shorter summary is translated into polished English.
+- Summary and translation output limits are sized for detailed multi-page briefs rather than short two-page notes.
 - The PDF title uses the clean YouTube title, not the video ID or link.
 - The full YouTube URL is printed near the top of the PDF.
 - The transcript body is optimized for readability.
