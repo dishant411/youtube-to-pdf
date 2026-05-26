@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import html
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
-from xml.etree import ElementTree as ET
 
 
 def _wrap_word(
@@ -82,17 +82,39 @@ def _normalize_reportlab_markup(tag: str, content: str) -> str:
     return content
 
 
-def _render_inline_html(node: ET.Element) -> str:
+class _SummaryHtmlParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.root = {"tag": "root", "children": []}
+        self.stack = [self.root]
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        node = {"tag": tag.lower(), "children": []}
+        self.stack[-1]["children"].append(node)
+        if tag.lower() not in {"br", "hr", "img", "meta", "link", "input"}:
+            self.stack.append(node)
+
+    def handle_endtag(self, tag: str) -> None:
+        normalized = tag.lower()
+        for index in range(len(self.stack) - 1, 0, -1):
+            if self.stack[index]["tag"] == normalized:
+                del self.stack[index:]
+                return
+
+    def handle_data(self, data: str) -> None:
+        if data:
+            self.stack[-1]["children"].append(data)
+
+
+def _render_inline_html(node: dict[str, object]) -> str:
     parts: List[str] = []
-    if node.text:
-        parts.append(html.escape(node.text, quote=False))
-
-    for child in list(node):
-        child_content = _render_inline_html(child)
-        parts.append(_normalize_reportlab_markup(child.tag.lower(), child_content))
-        if child.tail:
-            parts.append(html.escape(child.tail, quote=False))
-
+    for child in node.get("children", []):
+        if isinstance(child, str):
+            parts.append(html.escape(child, quote=False))
+            continue
+        if isinstance(child, dict):
+            child_content = _render_inline_html(child)
+            parts.append(_normalize_reportlab_markup(str(child.get("tag", "")).lower(), child_content))
     return "".join(parts)
 
 
@@ -104,11 +126,15 @@ def _markdown_to_summary_blocks(summary_text: str) -> List[dict[str, object]]:
         extensions=["extra", "sane_lists"],
         output_format="html5",
     )
-    root = ET.fromstring("<root>{content}</root>".format(content=rendered_summary))
+    parser = _SummaryHtmlParser()
+    parser.feed(rendered_summary)
+    root = parser.root
     blocks: List[dict[str, object]] = []
 
-    for child in list(root):
-        tag = child.tag.lower()
+    for child in root["children"]:
+        if not isinstance(child, dict):
+            continue
+        tag = str(child.get("tag", "")).lower()
         if tag in {"h1", "h2", "h3"}:
             blocks.append({"type": "heading", "level": int(tag[1]), "text": _render_inline_html(child)})
             continue
@@ -117,8 +143,8 @@ def _markdown_to_summary_blocks(summary_text: str) -> List[dict[str, object]]:
             continue
         if tag in {"ul", "ol"}:
             items = []
-            for item in list(child):
-                if item.tag.lower() == "li":
+            for item in child.get("children", []):
+                if isinstance(item, dict) and str(item.get("tag", "")).lower() == "li":
                     items.append(_render_inline_html(item))
             blocks.append({"type": "list", "ordered": tag == "ol", "items": items})
             continue

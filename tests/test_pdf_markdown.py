@@ -29,6 +29,19 @@ class PdfMarkdownTests(unittest.TestCase):
             },
         )
 
+    def test_markdown_parser_tolerates_mismatched_model_html(self) -> None:
+        if importlib.util.find_spec("markdown") is None:
+            self.skipTest("markdown package is not installed in this environment")
+
+        blocks = _markdown_to_summary_blocks(
+            "## Executive Summary\n\nThis has <b>bold text</i> and should still render.\n\n- Keep going"
+        )
+
+        self.assertEqual(blocks[0], {"type": "heading", "level": 2, "text": "Executive Summary"})
+        self.assertEqual(blocks[1]["type"], "paragraph")
+        self.assertIn("bold text", blocks[1]["text"])
+        self.assertEqual(blocks[2], {"type": "list", "ordered": False, "items": ["Keep going"]})
+
 
 if __name__ == "__main__":
     unittest.main()
