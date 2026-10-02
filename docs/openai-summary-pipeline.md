@@ -107,7 +107,7 @@ export OPENAI_API_KEY=your_key_here
 Optional overrides:
 
 ```bash
-export OPENAI_MODEL=gpt-5.4-nano
+export OPENAI_MODEL=gpt-6.1-sol
 export YOUTUBE_TO_PDF_OUTPUT_DIR="$HOME/Documents/youtube-to-pdf"
 ```
 

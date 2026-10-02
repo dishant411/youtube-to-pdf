@@ -53,7 +53,7 @@ async function runSimplePipeline(transcriptResult, options = {}) {
 
   const chunks = chunkBlocks(blocks, options.maxChunkChars || 7000);
   const client = createOpenAIClient();
-  const model = options.model || process.env.OPENAI_MODEL || "gpt-5.4-nano";
+  const model = options.model || process.env.OPENAI_MODEL || "gpt-6.1-sol";
 
   let finalInputText = chunks[0].text;
   let chunkSummaries = [];
