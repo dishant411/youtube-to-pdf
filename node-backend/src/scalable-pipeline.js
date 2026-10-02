@@ -118,7 +118,7 @@ async function runScalablePipeline(transcriptResult, options = {}) {
 
   const chunks = chunkBlocks(blocks, options.maxChunkChars || 6000);
   const client = createOpenAIClient();
-  const model = options.model || process.env.OPENAI_MODEL || "gpt-5.4-nano";
+  const model = options.model || process.env.OPENAI_MODEL || "gpt-6.1-sol";
   const cache =
     options.enableCache === false ? null : new FileCache(options.cacheDir || DEFAULT_CACHE_DIR);
 

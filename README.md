@@ -31,6 +31,8 @@ Edit `.env` and set:
 OPENAI_API_KEY=your_openai_api_key
 ```
 
+The default summary and translation model is `gpt-6.1-sol` (GPT-6.1 Sol), verified in the [OpenAI model catalog](https://developers.openai.com/api/docs/models/gpt-6.1-sol). Set `OPENAI_MODEL` in `.env` to override it. Existing clones should update any older `OPENAI_MODEL` value in `.env` and rebuild with `python3 run_converter.py --rebuild` before converting.
+
 Then verify the environment:
 
 ```bash

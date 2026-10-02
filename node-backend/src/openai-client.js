@@ -62,7 +62,7 @@ async function requestTextResponse(
   {
     input,
     maxOutputTokens = 900,
-    model = process.env.OPENAI_MODEL || "gpt-5.4-nano",
+    model = process.env.OPENAI_MODEL || "gpt-6.1-sol",
     retries = 4,
   },
 ) {
