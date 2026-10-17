@@ -13,7 +13,7 @@ from app.env_loader import load_repo_env
 from app.formatting import blocks_to_compact_text, build_summary_blocks
 from app.models import TranscriptSegment
 
-DEFAULT_MODEL = "gpt-5.4-nano"
+DEFAULT_MODEL = "gpt-6.1-sol"
 DEFAULT_TIMEOUT_SECONDS = 60
 RESPONSES_API_URL = "https://api.openai.com/v1/responses"
 RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}

@@ -52,14 +52,17 @@ class OpenAISummaryTests(unittest.TestCase):
                 )
 
         self.assertIn("Executive Summary", summary_text)
-        self.assertEqual(model, "gpt-5.4-nano")
+        self.assertEqual(model, "gpt-6.1-sol")
         self.assertEqual(mocked_urlopen.call_count, 1)
+        request_payload = json.loads(mocked_urlopen.call_args.args[0].data)
+        self.assertEqual(request_payload["model"], "gpt-6.1-sol")
+        self.assertEqual(request_payload["max_output_tokens"], 2800)
 
     def test_hindi_transcript_is_summarized_before_translation(self) -> None:
         with mock.patch("app.openai_summary.request_summary_text") as request_text:
             request_text.side_effect = [
-                ("## कार्यकारी सारांश\nहिंदी सारांश।", "gpt-5.4-nano"),
-                ("## Executive Summary\nEnglish summary.", "gpt-5.4-nano"),
+                ("## कार्यकारी सारांश\nहिंदी सारांश।", "gpt-6.1-sol"),
+                ("## Executive Summary\nEnglish summary.", "gpt-6.1-sol"),
             ]
             summary_text, model = summarize_transcript(
                 title="Hindi Video",
@@ -69,7 +72,7 @@ class OpenAISummaryTests(unittest.TestCase):
             )
 
         self.assertIn("English summary", summary_text)
-        self.assertEqual(model, "gpt-5.4-nano")
+        self.assertEqual(model, "gpt-6.1-sol")
         self.assertEqual(request_text.call_count, 2)
         source_summary_prompt = request_text.call_args_list[0].args[0]
         translation_prompt = request_text.call_args_list[1].args[0]
